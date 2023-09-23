@@ -97,45 +97,54 @@ func (dl *DeepLink) Unregister() (bool, error) {
 
 }
 
+func isAnotherProcessExists(port uint) bool {
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		return false
+	}
+
+	conn.Close()
+
+	return true
+}
+
+func (dl *DeepLink) listen(port uint) {
+	listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		go func() {
+			buf := make([]byte, 1024)
+			n, _ := conn.Read(buf)
+
+			if n > 0 {
+				dl.OnMessage(string(buf[:n]))
+			}
+		}()
+	}
+}
+
 // Prepare prepares the DeepLink instance for receiving messages, this is required to redirect message to already running app
 func (dl *DeepLink) Prepare() {
 	go func() {
-		listener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", dl.Port))
-		if err != nil {
-			if strings.Contains(err.Error(), "Only one usage of each socket address") {
-				conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", dl.Port))
-				if err != nil {
-					os.Exit(1)
-				}
-
-				conn.Write([]byte(os.Args[len(os.Args)-1]))
-				conn.Close()
-
-				os.Exit(0)
-			}
-		}
-
-		// listen for incoming connections
-		for {
-			message, err := listener.Accept()
+		if isAnotherProcessExists(dl.Port) {
+			conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", dl.Port))
 			if err != nil {
-				os.Exit(0)
+				log.Fatal(err)
 			}
 
-			buf := make([]byte, 1024)
-			n, err := message.Read(buf)
-			if err != nil {
-				os.Exit(0)
-			}
-
-			var msg string
-			if n > 0 {
-				msg = string(buf[:n])
-
-				if dl.OnMessage != nil {
-					dl.OnMessage(msg)
-				}
-			}
+			conn.Write([]byte(os.Args[len(os.Args)-1]))
+			conn.Close()
+			os.Exit(0)
+		} else {
+			dl.listen(dl.Port)
 		}
 	}()
 }
